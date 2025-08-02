@@ -349,6 +349,10 @@ def get_files_pathlib(root_dir):
 def index():
     return render_template('index.html')
 
+@app.route('/chat')
+def websocket_chat():
+    return render_template('websocket_chat.html')
+
 @app.route('/file/<filename>')
 def file(filename):
     file_path = os.path.join(app.config['WORKSPACE'], filename)

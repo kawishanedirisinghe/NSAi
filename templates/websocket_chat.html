@@ -1,0 +1,1310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced AI Chat - WebSocket</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #818cf8;
+            --secondary: #10b981;
+            --secondary-dark: #059669;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --success: #10b981;
+            --info: #3b82f6;
+            --dark: #0f172a;
+            --dark-light: #1e293b;
+            --dark-lighter: #334155;
+            --gray: #64748b;
+            --gray-light: #94a3b8;
+            --light: #f8fafc;
+            --white: #ffffff;
+            --border: #334155;
+            --shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+            --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            --gradient-secondary: linear-gradient(135deg, var(--secondary) 0%, var(--info) 100%);
+            --glass-bg: rgba(30, 41, 59, 0.8);
+            --glass-border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--dark);
+            color: var(--light);
+            line-height: 1.6;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            background: var(--dark-light);
+            border-radius: 15px;
+            margin-bottom: 20px;
+            box-shadow: var(--shadow);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo-icon {
+            width: 50px;
+            height: 50px;
+            background: var(--gradient-primary);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+            box-shadow: var(--shadow);
+        }
+
+        .logo-text {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--white) 0%, rgba(255,255,255,0.8) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .status-connected {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .status-disconnected {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-connected .status-indicator {
+            background: var(--success);
+        }
+
+        .status-disconnected .status-indicator {
+            background: var(--danger);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Main Layout */
+        .main-layout {
+            display: grid;
+            grid-template-columns: 300px 1fr 300px;
+            gap: 20px;
+            flex: 1;
+            min-height: 0;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: var(--dark-light);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: var(--shadow);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .sidebar-section {
+            background: var(--dark-lighter);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .section-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--white);
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* User Registration */
+        .user-registration {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .input-group label {
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--gray-light);
+        }
+
+        .input-group input {
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--dark);
+            color: var(--light);
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+
+        .btn-primary {
+            background: var(--gradient-primary);
+            color: white;
+            box-shadow: var(--shadow);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .btn-secondary {
+            background: var(--dark-lighter);
+            color: var(--light);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Online Users */
+        .online-users {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .user-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            background: var(--dark);
+            transition: all 0.2s ease;
+        }
+
+        .user-item:hover {
+            background: var(--dark-lighter);
+        }
+
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--gradient-secondary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .user-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .user-name {
+            color: var(--white);
+            font-weight: 500;
+            font-size: 0.9rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .user-role {
+            color: var(--gray-light);
+            font-size: 0.75rem;
+        }
+
+        .user-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+
+        /* Chat Container */
+        .chat-container {
+            background: var(--dark-light);
+            border-radius: 15px;
+            box-shadow: var(--shadow);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--dark-lighter);
+        }
+
+        .chat-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--white);
+        }
+
+        .chat-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .action-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: var(--dark);
+            color: var(--light);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .action-btn:hover {
+            background: var(--dark-lighter);
+            border-color: var(--primary);
+        }
+
+        /* Messages Area */
+        .messages-area {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 15px 20px;
+            border-radius: 18px;
+            position: relative;
+            animation: messageSlide 0.3s ease-out;
+            line-height: 1.5;
+            font-size: 0.95rem;
+        }
+
+        @keyframes messageSlide {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .user-message {
+            align-self: flex-end;
+            background: var(--gradient-primary);
+            color: white;
+            border-bottom-right-radius: 6px;
+        }
+
+        .other-message {
+            align-self: flex-start;
+            background: var(--dark-lighter);
+            color: var(--light);
+            border-bottom-left-radius: 6px;
+        }
+
+        .system-message {
+            align-self: center;
+            background: var(--warning);
+            color: var(--dark);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            max-width: 60%;
+            text-align: center;
+        }
+
+        .admin-message {
+            align-self: center;
+            background: var(--danger);
+            color: white;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            max-width: 60%;
+            text-align: center;
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 5px;
+        }
+
+        .message-username {
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+
+        .message-time {
+            font-size: 0.75rem;
+            opacity: 0.7;
+        }
+
+        .message-content {
+            margin-bottom: 5px;
+        }
+
+        .message-attachments {
+            margin-top: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+
+        .attachment-tag {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* Typing Indicator */
+        .typing-indicator {
+            align-self: flex-start;
+            background: var(--dark-lighter);
+            padding: 15px 20px;
+            border-radius: 18px;
+            border-bottom-left-radius: 6px;
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            font-size: 0.85rem;
+            color: var(--gray-light);
+        }
+
+        .typing-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .typing-dot {
+            width: 6px;
+            height: 6px;
+            background: var(--gray-light);
+            border-radius: 50%;
+            animation: typingBounce 1.4s infinite ease-in-out;
+        }
+
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typingBounce {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-8px); }
+        }
+
+        /* Input Area */
+        .input-area {
+            padding: 20px;
+            border-top: 1px solid var(--border);
+            background: var(--dark-lighter);
+        }
+
+        .input-container {
+            display: flex;
+            gap: 15px;
+            align-items: flex-end;
+        }
+
+        .message-input {
+            flex: 1;
+            background: var(--dark);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 15px 20px;
+            font-family: inherit;
+            font-size: 0.95rem;
+            color: var(--light);
+            resize: none;
+            min-height: 50px;
+            max-height: 120px;
+            transition: all 0.3s ease;
+        }
+
+        .message-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+        }
+
+        .input-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .send-button {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            background: var(--gradient-primary);
+            color: white;
+            box-shadow: var(--shadow);
+        }
+
+        .send-button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .send-button:disabled {
+            background: var(--gray);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        /* Right Sidebar - Admin Panel */
+        .admin-panel {
+            background: var(--dark-light);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: var(--shadow);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .admin-section {
+            background: var(--dark-lighter);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .admin-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 15px;
+            background: var(--dark);
+            border-radius: 8px;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--gray-light);
+        }
+
+        .admin-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .admin-btn {
+            padding: 10px 15px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--dark);
+            color: var(--light);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.85rem;
+        }
+
+        .admin-btn:hover {
+            background: var(--dark-lighter);
+            border-color: var(--primary);
+        }
+
+        .admin-btn.danger {
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+
+        .admin-btn.danger:hover {
+            background: var(--danger);
+            color: white;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 1200px) {
+            .main-layout {
+                grid-template-columns: 250px 1fr 250px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .main-layout {
+                grid-template-columns: 1fr;
+                gap: 15px;
+            }
+
+            .sidebar, .admin-panel {
+                order: 2;
+            }
+
+            .container {
+                padding: 15px;
+            }
+
+            .header {
+                flex-direction: column;
+                gap: 15px;
+                text-align: center;
+            }
+        }
+
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--dark);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--gray);
+        }
+
+        /* Utility Classes */
+        .hidden { display: none !important; }
+        .text-center { text-align: center; }
+        .mb-2 { margin-bottom: 0.5rem; }
+        .mb-4 { margin-bottom: 1rem; }
+        .mt-4 { margin-top: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">
+                <div class="logo-icon">
+                    <i class="fas fa-robot"></i>
+                </div>
+                <div class="logo-text">Advanced AI Chat</div>
+            </div>
+            <div class="header-actions">
+                <div class="connection-status" id="connectionStatus">
+                    <div class="status-indicator"></div>
+                    <span id="statusText">Disconnected</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Layout -->
+        <div class="main-layout">
+            <!-- Left Sidebar -->
+            <div class="sidebar">
+                <!-- User Registration -->
+                <div class="sidebar-section">
+                    <div class="section-title">
+                        <i class="fas fa-user"></i>
+                        User Registration
+                    </div>
+                    <div class="user-registration" id="userRegistration">
+                        <div class="input-group">
+                            <label for="username">Username</label>
+                            <input type="text" id="username" placeholder="Enter your username">
+                        </div>
+                        <div class="input-group">
+                            <label for="password">Password (Admin)</label>
+                            <input type="password" id="password" placeholder="Leave empty for regular user">
+                        </div>
+                        <button class="btn btn-primary" id="registerBtn">
+                            <i class="fas fa-sign-in-alt"></i>
+                            Connect
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Online Users -->
+                <div class="sidebar-section">
+                    <div class="section-title">
+                        <i class="fas fa-users"></i>
+                        Online Users
+                    </div>
+                    <div class="online-users" id="onlineUsers">
+                        <div class="text-center text-gray">No users online</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Container -->
+            <div class="chat-container">
+                <div class="chat-header">
+                    <div class="chat-title">General Chat</div>
+                    <div class="chat-actions">
+                        <button class="action-btn" id="clearChatBtn" title="Clear Chat">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                        <button class="action-btn" id="themeToggleBtn" title="Toggle Theme">
+                            <i class="fas fa-moon"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="messages-area" id="messagesArea">
+                    <div class="system-message">
+                        Welcome to Advanced AI Chat! Please register to start chatting.
+                    </div>
+                </div>
+
+                <div class="input-area">
+                    <div class="input-container">
+                        <textarea 
+                            class="message-input" 
+                            id="messageInput" 
+                            placeholder="Type your message..."
+                            disabled
+                        ></textarea>
+                        <div class="input-actions">
+                            <button class="send-button" id="sendBtn" disabled>
+                                <i class="fas fa-paper-plane"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Sidebar - Admin Panel -->
+            <div class="admin-panel" id="adminPanel">
+                <div class="admin-section">
+                    <div class="section-title">
+                        <i class="fas fa-chart-bar"></i>
+                        Statistics
+                    </div>
+                    <div class="admin-stats" id="adminStats">
+                        <div class="stat-item">
+                            <div class="stat-value" id="totalUsers">0</div>
+                            <div class="stat-label">Total Users</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="onlineUsers">0</div>
+                            <div class="stat-label">Online</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="totalMessages">0</div>
+                            <div class="stat-label">Messages</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="adminUsers">0</div>
+                            <div class="stat-label">Admins</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-section">
+                    <div class="section-title">
+                        <i class="fas fa-shield-alt"></i>
+                        Admin Actions
+                    </div>
+                    <div class="admin-actions">
+                        <button class="admin-btn" id="refreshStatsBtn">
+                            <i class="fas fa-sync"></i>
+                            Refresh Stats
+                        </button>
+                        <button class="admin-btn" id="broadcastBtn">
+                            <i class="fas fa-bullhorn"></i>
+                            Broadcast Message
+                        </button>
+                        <button class="admin-btn danger" id="kickUserBtn">
+                            <i class="fas fa-user-times"></i>
+                            Kick User
+                        </button>
+                        <button class="admin-btn danger" id="banUserBtn">
+                            <i class="fas fa-ban"></i>
+                            Ban User
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class WebSocketChat {
+            constructor() {
+                this.ws = null;
+                this.userId = null;
+                this.username = null;
+                this.isAdmin = false;
+                this.isConnected = false;
+                this.typingUsers = new Set();
+                this.onlineUsers = new Map();
+                
+                this.initElements();
+                this.initEventListeners();
+                this.connect();
+            }
+
+            initElements() {
+                // Form elements
+                this.usernameInput = document.getElementById('username');
+                this.passwordInput = document.getElementById('password');
+                this.registerBtn = document.getElementById('registerBtn');
+                this.userRegistration = document.getElementById('userRegistration');
+
+                // Chat elements
+                this.messageInput = document.getElementById('messageInput');
+                this.sendBtn = document.getElementById('sendBtn');
+                this.messagesArea = document.getElementById('messagesArea');
+                this.onlineUsersContainer = document.getElementById('onlineUsers');
+
+                // Status elements
+                this.connectionStatus = document.getElementById('connectionStatus');
+                this.statusText = document.getElementById('statusText');
+
+                // Admin elements
+                this.adminPanel = document.getElementById('adminPanel');
+                this.adminStats = document.getElementById('adminStats');
+                this.refreshStatsBtn = document.getElementById('refreshStatsBtn');
+                this.broadcastBtn = document.getElementById('broadcastBtn');
+                this.kickUserBtn = document.getElementById('kickUserBtn');
+                this.banUserBtn = document.getElementById('banUserBtn');
+
+                // Action buttons
+                this.clearChatBtn = document.getElementById('clearChatBtn');
+                this.themeToggleBtn = document.getElementById('themeToggleBtn');
+            }
+
+            initEventListeners() {
+                // Registration
+                this.registerBtn.addEventListener('click', () => this.registerUser());
+
+                // Message sending
+                this.sendBtn.addEventListener('click', () => this.sendMessage());
+                this.messageInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+
+                // Typing indicator
+                let typingTimer;
+                this.messageInput.addEventListener('input', () => {
+                    if (this.isConnected && this.userId) {
+                        clearTimeout(typingTimer);
+                        this.sendTyping(true);
+                        typingTimer = setTimeout(() => this.sendTyping(false), 1000);
+                    }
+                });
+
+                // Admin actions
+                this.refreshStatsBtn.addEventListener('click', () => this.getStats());
+                this.broadcastBtn.addEventListener('click', () => this.showBroadcastDialog());
+                this.kickUserBtn.addEventListener('click', () => this.showKickDialog());
+                this.banUserBtn.addEventListener('click', () => this.showBanDialog());
+
+                // Other actions
+                this.clearChatBtn.addEventListener('click', () => this.clearChat());
+                this.themeToggleBtn.addEventListener('click', () => this.toggleTheme());
+            }
+
+            connect() {
+                try {
+                    this.ws = new WebSocket('ws://localhost:8765');
+                    
+                    this.ws.onopen = () => {
+                        this.isConnected = true;
+                        this.updateConnectionStatus(true);
+                        console.log('Connected to WebSocket server');
+                    };
+
+                    this.ws.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        this.handleMessage(data);
+                    };
+
+                    this.ws.onclose = () => {
+                        this.isConnected = false;
+                        this.updateConnectionStatus(false);
+                        console.log('Disconnected from WebSocket server');
+                        
+                        // Try to reconnect after 5 seconds
+                        setTimeout(() => this.connect(), 5000);
+                    };
+
+                    this.ws.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.updateConnectionStatus(false);
+                    };
+
+                } catch (error) {
+                    console.error('Failed to connect:', error);
+                    this.updateConnectionStatus(false);
+                }
+            }
+
+            updateConnectionStatus(connected) {
+                if (connected) {
+                    this.connectionStatus.className = 'connection-status status-connected';
+                    this.statusText.textContent = 'Connected';
+                } else {
+                    this.connectionStatus.className = 'connection-status status-disconnected';
+                    this.statusText.textContent = 'Disconnected';
+                }
+            }
+
+            registerUser() {
+                const username = this.usernameInput.value.trim();
+                const password = this.passwordInput.value.trim();
+
+                if (!username) {
+                    alert('Please enter a username');
+                    return;
+                }
+
+                if (!this.isConnected) {
+                    alert('Not connected to server');
+                    return;
+                }
+
+                this.registerBtn.disabled = true;
+                this.registerBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Connecting...';
+
+                // Check if admin
+                const isAdmin = password === 'admin123' || password === 'mod123';
+
+                this.ws.send(JSON.stringify({
+                    type: 'register',
+                    username: username,
+                    is_admin: isAdmin
+                }));
+            }
+
+            sendMessage() {
+                const content = this.messageInput.value.trim();
+                if (!content || !this.isConnected || !this.userId) return;
+
+                this.ws.send(JSON.stringify({
+                    type: 'message',
+                    user_id: this.userId,
+                    content: content,
+                    message_type: 'text'
+                }));
+
+                this.messageInput.value = '';
+                this.messageInput.focus();
+            }
+
+            sendTyping(isTyping) {
+                if (!this.isConnected || !this.userId) return;
+
+                this.ws.send(JSON.stringify({
+                    type: 'typing',
+                    user_id: this.userId,
+                    is_typing: isTyping
+                }));
+            }
+
+            handleMessage(data) {
+                switch (data.type) {
+                    case 'user_registered':
+                        this.onUserRegistered(data);
+                        break;
+                    case 'message':
+                        this.addMessage(data.message);
+                        break;
+                    case 'system':
+                        this.addSystemMessage(data.content);
+                        break;
+                    case 'user_joined':
+                        this.onUserJoined(data.user);
+                        break;
+                    case 'user_left':
+                        this.onUserLeft(data.user);
+                        break;
+                    case 'typing':
+                        this.handleTyping(data);
+                        break;
+                    case 'admin_broadcast':
+                        this.addAdminMessage(data.message, data.admin);
+                        break;
+                    case 'admin_stats':
+                        this.updateAdminStats(data.stats);
+                        break;
+                    case 'kicked':
+                        this.onKicked(data.reason);
+                        break;
+                    case 'error':
+                        this.addSystemMessage(`Error: ${data.message}`, 'error');
+                        break;
+                }
+            }
+
+            onUserRegistered(data) {
+                this.userId = data.user_id;
+                this.username = data.username;
+                this.isAdmin = data.role === 'admin';
+
+                // Hide registration form
+                this.userRegistration.style.display = 'none';
+
+                // Enable chat
+                this.messageInput.disabled = false;
+                this.sendBtn.disabled = false;
+
+                // Show admin panel if admin
+                if (this.isAdmin) {
+                    this.adminPanel.style.display = 'block';
+                    this.getStats();
+                }
+
+                this.addSystemMessage(`Welcome ${this.username}! You are now connected.`);
+            }
+
+            addMessage(message) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${message.user_id === this.userId ? 'user-message' : 'other-message'}`;
+
+                const time = new Date(message.timestamp).toLocaleTimeString();
+                
+                messageDiv.innerHTML = `
+                    <div class="message-header">
+                        <span class="message-username">${message.username}</span>
+                        <span class="message-time">${time}</span>
+                    </div>
+                    <div class="message-content">${this.escapeHtml(message.content)}</div>
+                    ${message.attachments && message.attachments.length > 0 ? `
+                        <div class="message-attachments">
+                            ${message.attachments.map(att => `
+                                <div class="attachment-tag">
+                                    <i class="fas fa-paperclip"></i>
+                                    ${this.escapeHtml(att)}
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                `;
+
+                this.messagesArea.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+
+            addSystemMessage(content, type = 'system') {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${type}-message`;
+                messageDiv.textContent = content;
+                this.messagesArea.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+
+            addAdminMessage(content, admin) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message admin-message';
+                messageDiv.innerHTML = `
+                    <div><strong>${admin}</strong>: ${this.escapeHtml(content)}</div>
+                `;
+                this.messagesArea.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+
+            onUserJoined(user) {
+                this.onlineUsers.set(user.id, user);
+                this.updateOnlineUsersList();
+                this.addSystemMessage(`${user.username} joined the chat`);
+            }
+
+            onUserLeft(user) {
+                this.onlineUsers.delete(user.id);
+                this.updateOnlineUsersList();
+                this.addSystemMessage(`${user.username} left the chat`);
+            }
+
+            handleTyping(data) {
+                if (data.is_typing) {
+                    this.typingUsers.add(data.user_id);
+                } else {
+                    this.typingUsers.delete(data.user_id);
+                }
+                this.updateTypingIndicator();
+            }
+
+            updateTypingIndicator() {
+                // Remove existing typing indicators
+                const existing = this.messagesArea.querySelector('.typing-indicator');
+                if (existing) {
+                    existing.remove();
+                }
+
+                if (this.typingUsers.size > 0) {
+                    const typingDiv = document.createElement('div');
+                    typingDiv.className = 'typing-indicator';
+                    
+                    const usernames = Array.from(this.typingUsers).map(id => {
+                        const user = this.onlineUsers.get(id);
+                        return user ? user.username : 'Unknown';
+                    });
+
+                    typingDiv.innerHTML = `
+                        ${usernames.join(', ')} is typing
+                        <div class="typing-dots">
+                            <div class="typing-dot"></div>
+                            <div class="typing-dot"></div>
+                            <div class="typing-dot"></div>
+                        </div>
+                    `;
+
+                    this.messagesArea.appendChild(typingDiv);
+                    this.scrollToBottom();
+                }
+            }
+
+            updateOnlineUsersList() {
+                if (this.onlineUsers.size === 0) {
+                    this.onlineUsersContainer.innerHTML = '<div class="text-center text-gray">No users online</div>';
+                    return;
+                }
+
+                this.onlineUsersContainer.innerHTML = Array.from(this.onlineUsers.values())
+                    .map(user => `
+                        <div class="user-item">
+                            <div class="user-avatar">${user.username.charAt(0).toUpperCase()}</div>
+                            <div class="user-info">
+                                <div class="user-name">${this.escapeHtml(user.username)}</div>
+                                <div class="user-role">${user.role}</div>
+                            </div>
+                            <div class="user-status"></div>
+                        </div>
+                    `).join('');
+            }
+
+            // Admin functions
+            getStats() {
+                if (!this.isAdmin) return;
+
+                this.ws.send(JSON.stringify({
+                    type: 'admin_command',
+                    user_id: this.userId,
+                    command: { type: 'get_stats' }
+                }));
+            }
+
+            updateAdminStats(stats) {
+                document.getElementById('totalUsers').textContent = stats.total_users;
+                document.getElementById('onlineUsers').textContent = stats.online_users;
+                document.getElementById('totalMessages').textContent = stats.total_messages;
+                document.getElementById('adminUsers').textContent = stats.admin_users.length;
+            }
+
+            showBroadcastDialog() {
+                const message = prompt('Enter broadcast message:');
+                if (message && this.isAdmin) {
+                    this.ws.send(JSON.stringify({
+                        type: 'admin_command',
+                        user_id: this.userId,
+                        command: {
+                            type: 'broadcast',
+                            message: message
+                        }
+                    }));
+                }
+            }
+
+            showKickDialog() {
+                const userId = prompt('Enter user ID to kick:');
+                const reason = prompt('Enter kick reason:');
+                if (userId && this.isAdmin) {
+                    this.ws.send(JSON.stringify({
+                        type: 'admin_command',
+                        user_id: this.userId,
+                        command: {
+                            type: 'kick_user',
+                            target_user_id: userId,
+                            reason: reason || 'Kicked by admin'
+                        }
+                    }));
+                }
+            }
+
+            showBanDialog() {
+                const userId = prompt('Enter user ID to ban:');
+                const reason = prompt('Enter ban reason:');
+                if (userId && this.isAdmin) {
+                    this.ws.send(JSON.stringify({
+                        type: 'admin_command',
+                        user_id: this.userId,
+                        command: {
+                            type: 'ban_user',
+                            target_user_id: userId,
+                            reason: reason || 'Banned by admin'
+                        }
+                    }));
+                }
+            }
+
+            // Utility functions
+            clearChat() {
+                this.messagesArea.innerHTML = '';
+                this.addSystemMessage('Chat cleared');
+            }
+
+            toggleTheme() {
+                document.body.classList.toggle('light-theme');
+                const icon = this.themeToggleBtn.querySelector('i');
+                if (document.body.classList.contains('light-theme')) {
+                    icon.className = 'fas fa-sun';
+                } else {
+                    icon.className = 'fas fa-moon';
+                }
+            }
+
+            scrollToBottom() {
+                this.messagesArea.scrollTop = this.messagesArea.scrollHeight;
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            onKicked(reason) {
+                this.addSystemMessage(`You have been kicked: ${reason}`, 'error');
+                this.userId = null;
+                this.username = null;
+                this.isAdmin = false;
+                
+                // Show registration form again
+                this.userRegistration.style.display = 'block';
+                this.adminPanel.style.display = 'none';
+                
+                // Disable chat
+                this.messageInput.disabled = true;
+                this.sendBtn.disabled = true;
+                
+                this.registerBtn.disabled = false;
+                this.registerBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Connect';
+            }
+        }
+
+        // Initialize the chat when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new WebSocketChat();
+        });
+    </script>
+</body>
+</html>
