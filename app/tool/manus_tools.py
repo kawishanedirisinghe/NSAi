@@ -377,15 +377,15 @@ class FileFindByName(BaseTool):
 # Shell session management
 shell_sessions: Dict[str, Dict] = {}
 
-class ShellExec(BaseTool):
-    name: str = "shell_exec"
-    description: str = "Execute commands in a specified shell session. Use for running code, installing packages, or managing files."
+class PythonExec(BaseTool):
+    name: str = "python_exec"
+    description: str = "Execute Python commands and scripts. Use for running Python code, installing packages, or managing Python environments."
     parameters: dict = {
         "type": "object",
         "properties": {
             "id": {
                 "type": "string",
-                "description": "Unique identifier of the target shell session"
+                "description": "Unique identifier of the target Python session"
             },
             "exec_dir": {
                 "type": "string",
@@ -393,15 +393,19 @@ class ShellExec(BaseTool):
             },
             "command": {
                 "type": "string",
-                "description": "Shell command to execute"
+                "description": "Python command or script to execute"
+            },
+            "use_venv": {
+                "type": "boolean",
+                "description": "Whether to use virtual environment if available"
             }
         },
         "required": ["id", "exec_dir", "command"]
     }
 
-    async def execute(self, *, id: str, exec_dir: str, command: str, **kwargs: Any) -> str:
+    async def execute(self, *, id: str, exec_dir: str, command: str, use_venv: bool = False, **kwargs: Any) -> str:
         try:
-            # Initialize shell session if it doesn't exist
+            # Initialize Python session if it doesn't exist
             if id not in shell_sessions:
                 shell_sessions[id] = {
                     'process': None,
@@ -416,10 +420,28 @@ class ShellExec(BaseTool):
             if not os.path.exists(exec_dir):
                 return f"❌ Error: Directory '{exec_dir}' does not exist"
             
-            # Execute command
+            # Prepare Python command
+            if command.startswith('py ') or command.startswith('python '):
+                # Already a Python command
+                py_command = command
+            else:
+                # Treat as Python code to execute
+                py_command = f"python -c \"{command}\""
+            
+            # Check for virtual environment
+            if use_venv:
+                venv_path = os.path.join(exec_dir, 'venv', 'bin', 'python')
+                if os.path.exists(venv_path):
+                    py_command = py_command.replace('python', venv_path)
+                else:
+                    venv_path = os.path.join(exec_dir, 'venv', 'Scripts', 'python.exe')
+                    if os.path.exists(venv_path):
+                        py_command = py_command.replace('python', venv_path)
+            
+            # Execute Python command
             try:
                 result = subprocess.run(
-                    command,
+                    py_command,
                     shell=True,
                     cwd=exec_dir,
                     capture_output=True,
@@ -443,7 +465,7 @@ class ShellExec(BaseTool):
                 if len(session['output']) > 10:
                     session['output'] = session['output'][-10:]
                 
-                result_text = f"💻 **Command executed in shell '{id}'**:\n```bash\n{command}\n```\n"
+                result_text = f"🐍 **Python command executed in session '{id}'**:\n```python\n{command}\n```\n"
                 
                 if output:
                     result_text += f"📤 **Output**:\n```\n{output}\n```\n"
@@ -456,22 +478,22 @@ class ShellExec(BaseTool):
                 return result_text
                 
             except subprocess.TimeoutExpired:
-                return f"⏰ Command timed out after 60 seconds: `{command}`"
+                return f"⏰ Python command timed out after 60 seconds: `{command}`"
             except Exception as e:
-                return f"❌ Error executing command: {str(e)}"
+                return f"❌ Error executing Python command: {str(e)}"
             
         except Exception as e:
-            return f"❌ Error in shell session '{id}': {str(e)}"
+            return f"❌ Error in Python session '{id}': {str(e)}"
 
-class ShellView(BaseTool):
-    name: str = "shell_view"
-    description: str = "View the content of a specified shell session. Use for checking command execution results or monitoring output."
+class PythonSessionView(BaseTool):
+    name: str = "python_session_view"
+    description: str = "View the content of a specified Python session. Use for checking command execution results or monitoring output."
     parameters: dict = {
         "type": "object",
         "properties": {
             "id": {
                 "type": "string",
-                "description": "Unique identifier of the target shell session"
+                "description": "Unique identifier of the target Python session"
             }
         },
         "required": ["id"]
@@ -480,18 +502,18 @@ class ShellView(BaseTool):
     async def execute(self, *, id: str, **kwargs: Any) -> str:
         try:
             if id not in shell_sessions:
-                return f"❌ Error: Shell session '{id}' does not exist"
+                return f"❌ Error: Python session '{id}' does not exist"
             
             session = shell_sessions[id]
             
             if not session['output']:
-                return f"📋 Shell session '{id}' has no command history"
+                return f"📋 Python session '{id}' has no command history"
             
-            result = f"📋 **Shell Session '{id}' History**:\n"
+            result = f"📋 **Python Session '{id}' History**:\n"
             result += f"📁 **Working Directory**: {session['working_dir']}\n\n"
             
             for i, output in enumerate(session['output'], 1):
-                result += f"**Command {i}**:\n```bash\n{output['command']}\n```\n"
+                result += f"**Command {i}**:\n```python\n{output['command']}\n```\n"
                 
                 if output['stdout']:
                     result += f"**Output**:\n```\n{output['stdout']}\n```\n"
@@ -505,17 +527,17 @@ class ShellView(BaseTool):
             return result
             
         except Exception as e:
-            return f"❌ Error viewing shell session '{id}': {str(e)}"
+            return f"❌ Error viewing Python session '{id}': {str(e)}"
 
-class ShellWait(BaseTool):
-    name: str = "shell_wait"
-    description: str = "Wait for the running process in a specified shell session to return. Use after running commands that require longer runtime."
+class PythonSessionWait(BaseTool):
+    name: str = "python_session_wait"
+    description: str = "Wait for the running process in a specified Python session to return. Use after running commands that require longer runtime."
     parameters: dict = {
         "type": "object",
         "properties": {
             "id": {
                 "type": "string",
-                "description": "Unique identifier of the target shell session"
+                "description": "Unique identifier of the target Python session"
             },
             "seconds": {
                 "type": "integer",
@@ -528,18 +550,18 @@ class ShellWait(BaseTool):
     async def execute(self, *, id: str, seconds: int = 0, **kwargs: Any) -> str:
         try:
             if id not in shell_sessions:
-                return f"❌ Error: Shell session '{id}' does not exist"
+                return f"❌ Error: Python session '{id}' does not exist"
             
             session = shell_sessions[id]
             
             if seconds > 0:
                 await asyncio.sleep(seconds)
-                return f"⏰ Waited {seconds} seconds for shell session '{id}'"
+                return f"⏰ Waited {seconds} seconds for Python session '{id}'"
             else:
-                return f"ℹ️ Shell session '{id}' is ready (no wait time specified)"
+                return f"ℹ️ Python session '{id}' is ready (no wait time specified)"
             
         except Exception as e:
-            return f"❌ Error waiting for shell session '{id}': {str(e)}"
+            return f"❌ Error waiting for Python session '{id}': {str(e)}"
 
 # Additional advanced tools
 class FileCopy(BaseTool):
@@ -728,3 +750,421 @@ class SystemInfo(BaseTool):
             
         except Exception as e:
             return f"❌ Error getting system information: {str(e)}"
+
+# Additional advanced tools
+class PythonPackageManager(BaseTool):
+    name: str = "python_package_manager"
+    description: str = "Manage Python packages. Install, uninstall, or list packages in the current environment."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["install", "uninstall", "list", "show", "search"],
+                "description": "Action to perform"
+            },
+            "package": {
+                "type": "string",
+                "description": "Package name to install/uninstall/search"
+            },
+            "version": {
+                "type": "string",
+                "description": "Package version (optional)"
+            }
+        },
+        "required": ["action"]
+    }
+
+    async def execute(self, *, action: str, package: str = "", version: str = "", **kwargs: Any) -> str:
+        try:
+            if action == "install" and package:
+                cmd = f"pip install {package}"
+                if version:
+                    cmd += f"=={version}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                return f"📦 **Package Installation**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "uninstall" and package:
+                cmd = f"pip uninstall {package} -y"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                return f"🗑️ **Package Uninstallation**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "list":
+                result = subprocess.run("pip list", shell=True, capture_output=True, text=True, timeout=30)
+                return f"📋 **Installed Packages**:\n```\n{result.stdout}\n```"
+            
+            elif action == "show" and package:
+                result = subprocess.run(f"pip show {package}", shell=True, capture_output=True, text=True, timeout=30)
+                return f"ℹ️ **Package Info**:\n```\n{result.stdout}\n```"
+            
+            elif action == "search" and package:
+                result = subprocess.run(f"pip search {package}", shell=True, capture_output=True, text=True, timeout=30)
+                return f"🔍 **Package Search**:\n```\n{result.stdout}\n```"
+            
+            else:
+                return "❌ Invalid action or missing package name"
+                
+        except Exception as e:
+            return f"❌ Error in package management: {str(e)}"
+
+class GitOperations(BaseTool):
+    name: str = "git_operations"
+    description: str = "Perform Git operations. Clone, pull, push, commit, and manage repositories."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["clone", "pull", "push", "commit", "status", "log", "branch"],
+                "description": "Git action to perform"
+            },
+            "repository": {
+                "type": "string",
+                "description": "Repository URL or path"
+            },
+            "message": {
+                "type": "string",
+                "description": "Commit message"
+            },
+            "branch": {
+                "type": "string",
+                "description": "Branch name"
+            }
+        },
+        "required": ["action"]
+    }
+
+    async def execute(self, *, action: str, repository: str = "", message: str = "", branch: str = "", **kwargs: Any) -> str:
+        try:
+            if action == "clone" and repository:
+                result = subprocess.run(f"git clone {repository}", shell=True, capture_output=True, text=True, timeout=300)
+                return f"📥 **Git Clone**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "pull":
+                result = subprocess.run("git pull", shell=True, capture_output=True, text=True, timeout=60)
+                return f"⬇️ **Git Pull**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "push":
+                result = subprocess.run("git push", shell=True, capture_output=True, text=True, timeout=60)
+                return f"⬆️ **Git Push**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "commit" and message:
+                result = subprocess.run(f'git commit -m "{message}"', shell=True, capture_output=True, text=True, timeout=30)
+                return f"💾 **Git Commit**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "status":
+                result = subprocess.run("git status", shell=True, capture_output=True, text=True, timeout=30)
+                return f"📊 **Git Status**:\n```\n{result.stdout}\n```"
+            
+            elif action == "log":
+                result = subprocess.run("git log --oneline -10", shell=True, capture_output=True, text=True, timeout=30)
+                return f"📜 **Git Log**:\n```\n{result.stdout}\n```"
+            
+            elif action == "branch":
+                result = subprocess.run("git branch -a", shell=True, capture_output=True, text=True, timeout=30)
+                return f"🌿 **Git Branches**:\n```\n{result.stdout}\n```"
+            
+            else:
+                return "❌ Invalid action or missing parameters"
+                
+        except Exception as e:
+            return f"❌ Error in Git operations: {str(e)}"
+
+class DatabaseOperations(BaseTool):
+    name: str = "database_operations"
+    description: str = "Perform database operations. Connect, query, and manage databases."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["query", "execute", "backup", "restore"],
+                "description": "Database action to perform"
+            },
+            "database": {
+                "type": "string",
+                "description": "Database name or connection string"
+            },
+            "query": {
+                "type": "string",
+                "description": "SQL query to execute"
+            },
+            "backup_path": {
+                "type": "string",
+                "description": "Backup file path"
+            }
+        },
+        "required": ["action"]
+    }
+
+    async def execute(self, *, action: str, database: str = "", query: str = "", backup_path: str = "", **kwargs: Any) -> str:
+        try:
+            if action == "query" and database and query:
+                # For SQLite
+                if database.endswith('.db') or database.endswith('.sqlite'):
+                    result = subprocess.run(f"sqlite3 {database} '{query}'", shell=True, capture_output=True, text=True, timeout=30)
+                    return f"🗄️ **Database Query**:\n```\n{result.stdout}\n{result.stderr}\n```"
+                else:
+                    return "❌ Only SQLite databases are supported in this version"
+            
+            elif action == "backup" and database and backup_path:
+                if database.endswith('.db') or database.endswith('.sqlite'):
+                    result = subprocess.run(f"sqlite3 {database} '.backup {backup_path}'", shell=True, capture_output=True, text=True, timeout=60)
+                    return f"💾 **Database Backup**:\n```\n{result.stdout}\n{result.stderr}\n```"
+                else:
+                    return "❌ Only SQLite databases are supported in this version"
+            
+            else:
+                return "❌ Invalid action or missing parameters"
+                
+        except Exception as e:
+            return f"❌ Error in database operations: {str(e)}"
+
+class NetworkOperations(BaseTool):
+    name: str = "network_operations"
+    description: str = "Perform network operations. Ping, curl, wget, and network diagnostics."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["ping", "curl", "wget", "nslookup", "traceroute"],
+                "description": "Network action to perform"
+            },
+            "target": {
+                "type": "string",
+                "description": "Target URL or IP address"
+            },
+            "options": {
+                "type": "string",
+                "description": "Additional options"
+            }
+        },
+        "required": ["action", "target"]
+    }
+
+    async def execute(self, *, action: str, target: str, options: str = "", **kwargs: Any) -> str:
+        try:
+            if action == "ping":
+                cmd = f"ping -c 4 {target}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+                return f"🏓 **Ping Test**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "curl":
+                cmd = f"curl {options} {target}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                return f"🌐 **Curl Request**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "wget":
+                cmd = f"wget {options} {target}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+                return f"⬇️ **Wget Download**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "nslookup":
+                cmd = f"nslookup {target}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+                return f"🔍 **DNS Lookup**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "traceroute":
+                cmd = f"traceroute {target}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                return f"🛣️ **Traceroute**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            else:
+                return "❌ Invalid network action"
+                
+        except Exception as e:
+            return f"❌ Error in network operations: {str(e)}"
+
+class SystemMonitoring(BaseTool):
+    name: str = "system_monitoring"
+    description: str = "Monitor system resources and performance. CPU, memory, disk, and network usage."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "metric": {
+                "type": "string",
+                "enum": ["cpu", "memory", "disk", "network", "processes", "all"],
+                "description": "Metric to monitor"
+            },
+            "duration": {
+                "type": "integer",
+                "description": "Monitoring duration in seconds"
+            }
+        },
+        "required": ["metric"]
+    }
+
+    async def execute(self, *, metric: str, duration: int = 5, **kwargs: Any) -> str:
+        try:
+            if metric == "cpu":
+                result = subprocess.run("top -bn1 | grep 'Cpu(s)'", shell=True, capture_output=True, text=True, timeout=10)
+                return f"🖥️ **CPU Usage**:\n```\n{result.stdout}\n```"
+            
+            elif metric == "memory":
+                result = subprocess.run("free -h", shell=True, capture_output=True, text=True, timeout=10)
+                return f"💾 **Memory Usage**:\n```\n{result.stdout}\n```"
+            
+            elif metric == "disk":
+                result = subprocess.run("df -h", shell=True, capture_output=True, text=True, timeout=10)
+                return f"💿 **Disk Usage**:\n```\n{result.stdout}\n```"
+            
+            elif metric == "network":
+                result = subprocess.run("netstat -i", shell=True, capture_output=True, text=True, timeout=10)
+                return f"🌐 **Network Interfaces**:\n```\n{result.stdout}\n```"
+            
+            elif metric == "processes":
+                result = subprocess.run("ps aux --sort=-%cpu | head -10", shell=True, capture_output=True, text=True, timeout=10)
+                return f"⚙️ **Top Processes**:\n```\n{result.stdout}\n```"
+            
+            elif metric == "all":
+                result = subprocess.run("top -bn1", shell=True, capture_output=True, text=True, timeout=10)
+                return f"📊 **System Overview**:\n```\n{result.stdout}\n```"
+            
+            else:
+                return "❌ Invalid metric"
+                
+        except Exception as e:
+            return f"❌ Error in system monitoring: {str(e)}"
+
+class FileCompression(BaseTool):
+    name: str = "file_compression"
+    description: str = "Compress and decompress files. Support for zip, tar, gzip formats."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["compress", "decompress"],
+                "description": "Compression action"
+            },
+            "source": {
+                "type": "string",
+                "description": "Source file or directory"
+            },
+            "destination": {
+                "type": "string",
+                "description": "Destination file"
+            },
+            "format": {
+                "type": "string",
+                "enum": ["zip", "tar", "gzip"],
+                "description": "Compression format"
+            }
+        },
+        "required": ["action", "source"]
+    }
+
+    async def execute(self, *, action: str, source: str, destination: str = "", format: str = "zip", **kwargs: Any) -> str:
+        try:
+            if not destination:
+                if action == "compress":
+                    destination = f"{source}.{format}"
+                else:
+                    destination = source.rsplit('.', 1)[0]
+            
+            if action == "compress":
+                if format == "zip":
+                    cmd = f"zip -r {destination} {source}"
+                elif format == "tar":
+                    cmd = f"tar -czf {destination}.tar.gz {source}"
+                elif format == "gzip":
+                    cmd = f"gzip -c {source} > {destination}"
+                
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                return f"🗜️ **File Compression**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "decompress":
+                if format == "zip":
+                    cmd = f"unzip {source} -d {destination}"
+                elif format == "tar":
+                    cmd = f"tar -xzf {source} -C {destination}"
+                elif format == "gzip":
+                    cmd = f"gunzip -c {source} > {destination}"
+                
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                return f"📦 **File Decompression**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            else:
+                return "❌ Invalid action"
+                
+        except Exception as e:
+            return f"❌ Error in file compression: {str(e)}"
+
+class TextProcessing(BaseTool):
+    name: str = "text_processing"
+    description: str = "Process and analyze text files. Search, replace, sort, and filter text content."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["search", "replace", "sort", "filter", "count", "stats"],
+                "description": "Text processing action"
+            },
+            "file": {
+                "type": "string",
+                "description": "Input file path"
+            },
+            "pattern": {
+                "type": "string",
+                "description": "Search pattern or regex"
+            },
+            "replacement": {
+                "type": "string",
+                "description": "Replacement text"
+            },
+            "output": {
+                "type": "string",
+                "description": "Output file path"
+            }
+        },
+        "required": ["action", "file"]
+    }
+
+    async def execute(self, *, action: str, file: str, pattern: str = "", replacement: str = "", output: str = "", **kwargs: Any) -> str:
+        try:
+            if not os.path.exists(file):
+                return f"❌ File '{file}' does not exist"
+            
+            if action == "search" and pattern:
+                cmd = f"grep -n '{pattern}' {file}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+                return f"🔍 **Text Search**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "replace" and pattern and replacement:
+                if not output:
+                    output = f"{file}.new"
+                cmd = f"sed 's/{pattern}/{replacement}/g' {file} > {output}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+                return f"🔄 **Text Replacement**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "sort":
+                if not output:
+                    output = f"{file}.sorted"
+                cmd = f"sort {file} > {output}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+                return f"📊 **Text Sorting**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "filter" and pattern:
+                if not output:
+                    output = f"{file}.filtered"
+                cmd = f"grep '{pattern}' {file} > {output}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+                return f"🔍 **Text Filtering**:\n```\n{result.stdout}\n{result.stderr}\n```"
+            
+            elif action == "count":
+                cmd = f"wc -l {file}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+                return f"📊 **Line Count**:\n```\n{result.stdout}\n```"
+            
+            elif action == "stats":
+                cmd = f"wc {file}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+                return f"📈 **File Statistics**:\n```\n{result.stdout}\n```"
+            
+            else:
+                return "❌ Invalid action or missing parameters"
+                
+        except Exception as e:
+            return f"❌ Error in text processing: {str(e)}"
