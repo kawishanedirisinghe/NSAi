@@ -7,12 +7,22 @@ import subprocess
 import tempfile
 import json
 import shutil
+import psutil
+import requests
+import socket
+import platform
+import time
+import threading
 from pathlib import Path
-from typing import Any, List, Optional, Dict
+from typing import Any, List, Optional, Dict, Union
 from app.tool import BaseTool
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Enhanced shell session management
+shell_sessions = {}
 
 class MessageNotifyUser(BaseTool):
     name: str = "message_notify_user"
@@ -30,13 +40,25 @@ class MessageNotifyUser(BaseTool):
                     {"items": {"type": "string"}, "type": "array"}
                 ],
                 "description": "(Optional) List of attachments to show to user, can be file paths or URLs"
+            },
+            "message_type": {
+                "type": "string",
+                "enum": ["info", "success", "warning", "error"],
+                "description": "(Optional) Type of message for styling"
             }
         },
         "required": ["text"]
     }
 
-    async def execute(self, *, text: str, attachments: Optional[List[str]] = None, **kwargs: Any) -> str:
-        result = f"📢 **Notification**: {text}"
+    async def execute(self, *, text: str, attachments: Optional[List[str]] = None, message_type: str = "info", **kwargs: Any) -> str:
+        icons = {
+            "info": "ℹ️",
+            "success": "✅",
+            "warning": "⚠️",
+            "error": "❌"
+        }
+        icon = icons.get(message_type, "📢")
+        result = f"{icon} **{message_type.title()}**: {text}"
         if attachments:
             result += f"\n\n📎 **Attachments**:\n"
             for attachment in attachments:
@@ -62,19 +84,28 @@ class MessageAskUser(BaseTool):
             },
             "suggest_user_takeover": {
                 "type": "string",
-                "enum": ["none", "browser"],
+                "enum": ["none", "browser", "terminal", "file_editor"],
                 "description": "(Optional) Suggested operation for user takeover"
+            },
+            "options": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "(Optional) List of suggested options for user to choose from"
             }
         },
         "required": ["text"]
     }
 
-    async def execute(self, *, text: str, attachments: Optional[List[str]] = None, suggest_user_takeover: str = "none", **kwargs: Any) -> str:
+    async def execute(self, *, text: str, attachments: Optional[List[str]] = None, suggest_user_takeover: str = "none", options: Optional[List[str]] = None, **kwargs: Any) -> str:
         result = f"❓ **Question**: {text}"
         if attachments:
             result += f"\n\n📎 **Reference Materials**:\n"
             for attachment in attachments:
                 result += f"- {attachment}\n"
+        if options:
+            result += f"\n\n💡 **Suggested Options**:\n"
+            for i, option in enumerate(options, 1):
+                result += f"{i}. {option}\n"
         if suggest_user_takeover != "none":
             result += f"\n💡 **Suggestion**: Consider {suggest_user_takeover} takeover for this task."
         return result
@@ -100,45 +131,44 @@ class FileRead(BaseTool):
             "sudo": {
                 "type": "boolean",
                 "description": "(Optional) Whether to use sudo privileges"
+            },
+            "encoding": {
+                "type": "string",
+                "description": "(Optional) File encoding (default: utf-8)"
             }
         },
         "required": ["file"]
     }
 
-    async def execute(self, *, file: str, start_line: Optional[int] = None, end_line: Optional[int] = None, sudo: bool = False, **kwargs: Any) -> str:
+    async def execute(self, *, file: str, start_line: Optional[int] = None, end_line: Optional[int] = None, sudo: bool = False, encoding: str = "utf-8", **kwargs: Any) -> str:
         try:
-            if not os.path.exists(file):
-                return f"❌ Error: File '{file}' does not exist"
-            
             if sudo:
-                # Use sudo to read file
                 cmd = ["sudo", "cat", file]
-                if start_line is not None and end_line is not None:
-                    cmd = ["sudo", "sed", "-n", f"{start_line + 1},{end_line}p", file]
-                elif start_line is not None:
-                    cmd = ["sudo", "sed", "-n", f"{start_line + 1},$p", file]
-                
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 if result.returncode != 0:
-                    return f"❌ Error reading file with sudo: {result.stderr}"
+                    return f"❌ Error reading file '{file}': {result.stderr}"
                 content = result.stdout
             else:
-                # Read file normally
-                with open(file, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                
-                if start_line is not None or end_line is not None:
-                    start = start_line if start_line is not None else 0
-                    end = end_line if end_line is not None else len(lines)
-                    lines = lines[start:end]
-                
-                content = ''.join(lines)
+                with open(file, 'r', encoding=encoding) as f:
+                    content = f.read()
             
-            if not content.strip():
-                return f"📄 File '{file}' is empty"
+            lines = content.split('\n')
             
-            return f"📄 **File Content** (`{file}`):\n```\n{content}\n```"
+            if start_line is not None or end_line is not None:
+                start = start_line or 0
+                end = end_line or len(lines)
+                lines = lines[start:end]
+                content = '\n'.join(lines)
+                result = f"📖 **File Content** (lines {start}-{end}):\n```\n{content}\n```"
+            else:
+                result = f"📖 **File Content**:\n```\n{content}\n```"
             
+            return result
+            
+        except FileNotFoundError:
+            return f"❌ File '{file}' not found"
+        except PermissionError:
+            return f"❌ Permission denied reading file '{file}'"
         except Exception as e:
             return f"❌ Error reading file '{file}': {str(e)}"
 
@@ -158,62 +188,60 @@ class FileWrite(BaseTool):
             },
             "append": {
                 "type": "boolean",
-                "description": "(Optional) Whether to use append mode"
+                "description": "(Optional) Whether to append to existing content"
             },
             "leading_newline": {
                 "type": "boolean",
-                "description": "(Optional) Whether to add a leading newline"
+                "description": "(Optional) Whether to add a newline before content"
             },
             "trailing_newline": {
                 "type": "boolean",
-                "description": "(Optional) Whether to add a trailing newline"
+                "description": "(Optional) Whether to add a newline after content"
             },
             "sudo": {
                 "type": "boolean",
                 "description": "(Optional) Whether to use sudo privileges"
+            },
+            "encoding": {
+                "type": "string",
+                "description": "(Optional) File encoding (default: utf-8)"
             }
         },
         "required": ["file", "content"]
     }
 
-    async def execute(self, *, file: str, content: str, append: bool = False, leading_newline: bool = False, trailing_newline: bool = False, sudo: bool = False, **kwargs: Any) -> str:
+    async def execute(self, *, file: str, content: str, append: bool = False, leading_newline: bool = False, trailing_newline: bool = False, sudo: bool = False, encoding: str = "utf-8", **kwargs: Any) -> str:
         try:
-            # Prepare content
-            final_content = content
             if leading_newline:
-                final_content = "\n" + final_content
+                content = '\n' + content
             if trailing_newline:
-                final_content = final_content + "\n"
+                content = content + '\n'
             
             if sudo:
-                # Use sudo to write file
-                mode = "a" if append else "w"
-                temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
-                temp_file.write(final_content)
-                temp_file.close()
+                # Create temporary file
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding=encoding) as temp_file:
+                    temp_file.write(content)
+                    temp_file_path = temp_file.name
                 
-                cmd = ["sudo", "tee", "-a" if append else "", file]
-                if not append:
-                    cmd = ["sudo", "tee", file]
+                # Copy to destination with sudo
+                cmd = ["sudo", "cp", temp_file_path, file]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 
-                with open(temp_file.name, 'r') as f:
-                    result = subprocess.run(cmd, input=f.read(), capture_output=True, text=True, timeout=30)
-                
-                os.unlink(temp_file.name)
+                # Clean up temp file
+                os.unlink(temp_file_path)
                 
                 if result.returncode != 0:
-                    return f"❌ Error writing file with sudo: {result.stderr}"
+                    return f"❌ Error writing file '{file}': {result.stderr}"
             else:
-                # Write file normally
-                mode = "a" if append else "w"
-                with open(file, mode, encoding='utf-8') as f:
-                    f.write(final_content)
+                mode = 'a' if append else 'w'
+                with open(file, mode, encoding=encoding) as f:
+                    f.write(content)
             
             action = "appended to" if append else "written to"
-            return f"✅ Content {action} file: `{file}`"
+            return f"✅ Content {action} file '{file}'"
             
         except Exception as e:
-            return f"❌ Error writing to file '{file}': {str(e)}"
+            return f"❌ Error writing file '{file}': {str(e)}"
 
 class FileStrReplace(BaseTool):
     name: str = "file_str_replace"
@@ -223,11 +251,11 @@ class FileStrReplace(BaseTool):
         "properties": {
             "file": {
                 "type": "string",
-                "description": "Absolute path of the file to perform replacement on"
+                "description": "Absolute path of the file to modify"
             },
             "old_str": {
                 "type": "string",
-                "description": "Original string to be replaced"
+                "description": "String to replace"
             },
             "new_str": {
                 "type": "string",
@@ -236,42 +264,59 @@ class FileStrReplace(BaseTool):
             "sudo": {
                 "type": "boolean",
                 "description": "(Optional) Whether to use sudo privileges"
+            },
+            "regex": {
+                "type": "boolean",
+                "description": "(Optional) Whether to treat old_str as regex pattern"
             }
         },
         "required": ["file", "old_str", "new_str"]
     }
 
-    async def execute(self, *, file: str, old_str: str, new_str: str, sudo: bool = False, **kwargs: Any) -> str:
+    async def execute(self, *, file: str, old_str: str, new_str: str, sudo: bool = False, regex: bool = False, **kwargs: Any) -> str:
         try:
-            if not os.path.exists(file):
-                return f"❌ Error: File '{file}' does not exist"
-            
             if sudo:
-                # Use sed with sudo for replacement
-                escaped_old = old_str.replace('/', '\\/')
-                escaped_new = new_str.replace('/', '\\/')
-                cmd = ["sudo", "sed", "-i", f"s/{escaped_old}/{escaped_new}/g", file]
-                
+                cmd = ["sudo", "cat", file]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 if result.returncode != 0:
-                    return f"❌ Error replacing string with sudo: {result.stderr}"
+                    return f"❌ Error reading file '{file}': {result.stderr}"
+                content = result.stdout
             else:
-                # Read file, replace content, write back
                 with open(file, 'r', encoding='utf-8') as f:
                     content = f.read()
-                
-                if old_str not in content:
-                    return f"⚠️ String '{old_str}' not found in file '{file}'"
-                
+            
+            if regex:
+                import re
+                new_content = re.sub(old_str, new_str, content)
+            else:
                 new_content = content.replace(old_str, new_str)
+            
+            if new_content == content:
+                return f"⚠️ No changes made to file '{file}' (string not found)"
+            
+            if sudo:
+                # Create temporary file
+                with tempfile.NamedTemporaryFile(mode='w', delete=False) as temp_file:
+                    temp_file.write(new_content)
+                    temp_file_path = temp_file.name
                 
+                # Copy to destination with sudo
+                cmd = ["sudo", "cp", temp_file_path, file]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                
+                # Clean up temp file
+                os.unlink(temp_file_path)
+                
+                if result.returncode != 0:
+                    return f"❌ Error writing file '{file}': {result.stderr}"
+            else:
                 with open(file, 'w', encoding='utf-8') as f:
                     f.write(new_content)
             
-            return f"✅ Replaced '{old_str}' with '{new_str}' in file: `{file}`"
+            return f"✅ String replaced in file '{file}'"
             
         except Exception as e:
-            return f"❌ Error replacing string in file '{file}': {str(e)}"
+            return f"❌ Error modifying file '{file}': {str(e)}"
 
 class FileFindInContent(BaseTool):
     name: str = "file_find_in_content"
@@ -281,49 +326,57 @@ class FileFindInContent(BaseTool):
         "properties": {
             "file": {
                 "type": "string",
-                "description": "Absolute path of the file to search within"
+                "description": "Absolute path of the file to search in"
             },
             "regex": {
                 "type": "string",
-                "description": "Regular expression pattern to match"
+                "description": "Regex pattern to search for"
             },
             "sudo": {
                 "type": "boolean",
                 "description": "(Optional) Whether to use sudo privileges"
+            },
+            "case_sensitive": {
+                "type": "boolean",
+                "description": "(Optional) Whether search is case sensitive"
             }
         },
         "required": ["file", "regex"]
     }
 
-    async def execute(self, *, file: str, regex: str, sudo: bool = False, **kwargs: Any) -> str:
+    async def execute(self, *, file: str, regex: str, sudo: bool = False, case_sensitive: bool = True, **kwargs: Any) -> str:
         try:
-            if not os.path.exists(file):
-                return f"❌ Error: File '{file}' does not exist"
-            
             if sudo:
-                # Use grep with sudo
-                cmd = ["sudo", "grep", "-E", regex, file]
+                cmd = ["sudo", "cat", file]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                
-                if result.returncode == 0:
-                    matches = result.stdout.strip().split('\n')
-                    return f"🔍 **Matches found in '{file}'**:\n```\n{result.stdout}\n```"
-                elif result.returncode == 1:
-                    return f"🔍 No matches found for regex '{regex}' in file '{file}'"
-                else:
-                    return f"❌ Error searching file with sudo: {result.stderr}"
+                if result.returncode != 0:
+                    return f"❌ Error reading file '{file}': {result.stderr}"
+                content = result.stdout
             else:
-                # Read file and search with regex
                 with open(file, 'r', encoding='utf-8') as f:
                     content = f.read()
-                
-                pattern = re.compile(regex)
-                matches = pattern.findall(content)
-                
-                if matches:
-                    return f"🔍 **Matches found in '{file}'**:\n```\n{chr(10).join(matches)}\n```"
-                else:
-                    return f"🔍 No matches found for regex '{regex}' in file '{file}'"
+            
+            import re
+            flags = 0 if case_sensitive else re.IGNORECASE
+            pattern = re.compile(regex, flags)
+            matches = pattern.finditer(content)
+            
+            lines = content.split('\n')
+            results = []
+            
+            for match in matches:
+                start_pos = match.start()
+                line_num = content[:start_pos].count('\n') + 1
+                line_content = lines[line_num - 1] if line_num <= len(lines) else "Unknown line"
+                results.append(f"Line {line_num}: {line_content.strip()}")
+            
+            if results:
+                result_text = "\n".join(results[:10])  # Limit to first 10 matches
+                if len(results) > 10:
+                    result_text += f"\n... and {len(results) - 10} more matches"
+                return f"🔍 **Found {len(results)} matches** in '{file}':\n```\n{result_text}\n```"
+            else:
+                return f"🔍 No matches found in file '{file}'"
             
         except Exception as e:
             return f"❌ Error searching file '{file}': {str(e)}"
@@ -336,46 +389,113 @@ class FileFindByName(BaseTool):
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Absolute path of directory to search"
+                "description": "Directory path to search in"
             },
             "glob": {
                 "type": "string",
-                "description": "Filename pattern using glob syntax wildcards"
+                "description": "Glob pattern to match file names"
+            },
+            "recursive": {
+                "type": "boolean",
+                "description": "(Optional) Whether to search recursively"
+            },
+            "include_hidden": {
+                "type": "boolean",
+                "description": "(Optional) Whether to include hidden files"
             }
         },
         "required": ["path", "glob"]
     }
 
-    async def execute(self, *, path: str, glob: str, **kwargs: Any) -> str:
+    async def execute(self, *, path: str, glob: str, recursive: bool = False, include_hidden: bool = False, **kwargs: Any) -> str:
         try:
             if not os.path.exists(path):
-                return f"❌ Error: Directory '{path}' does not exist"
+                return f"❌ Directory '{path}' does not exist"
             
-            if not os.path.isdir(path):
-                return f"❌ Error: '{path}' is not a directory"
+            pattern = os.path.join(path, glob)
+            if recursive:
+                pattern = os.path.join(path, "**", glob)
             
-            # Use glob to find files
-            search_pattern = os.path.join(path, glob)
-            matching_files = glob.glob(search_pattern)
+            files = []
+            for file_path in Path(path).rglob(glob) if recursive else Path(path).glob(glob):
+                if not include_hidden and file_path.name.startswith('.'):
+                    continue
+                files.append(str(file_path))
             
-            if matching_files:
-                file_list = []
-                for file_path in matching_files:
-                    if os.path.isfile(file_path):
-                        size = os.path.getsize(file_path)
-                        file_list.append(f"📄 {file_path} ({size} bytes)")
-                    elif os.path.isdir(file_path):
-                        file_list.append(f"📁 {file_path}/")
-                
-                return f"🔍 **Files found in '{path}' matching '{glob}'**:\n```\n{chr(10).join(file_list)}\n```"
+            if files:
+                result_text = "\n".join(files[:20])  # Limit to first 20 files
+                if len(files) > 20:
+                    result_text += f"\n... and {len(files) - 20} more files"
+                return f"📁 **Found {len(files)} files** matching '{glob}' in '{path}':\n```\n{result_text}\n```"
             else:
-                return f"🔍 No files found in '{path}' matching pattern '{glob}'"
+                return f"📁 No files found matching '{glob}' in '{path}'"
             
         except Exception as e:
-            return f"❌ Error searching directory '{path}': {str(e)}"
+            return f"❌ Error searching for files: {str(e)}"
 
-# Shell session management
-shell_sessions: Dict[str, Dict] = {}
+class PythonExec(BaseTool):
+    name: str = "python_exec"
+    description: str = "Execute Python code in a controlled environment. Use for running Python scripts, data analysis, or testing code."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "code": {
+                "type": "string",
+                "description": "Python code to execute"
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "(Optional) Execution timeout in seconds (default: 30)"
+            },
+            "working_dir": {
+                "type": "string",
+                "description": "(Optional) Working directory for execution"
+            },
+            "capture_output": {
+                "type": "boolean",
+                "description": "(Optional) Whether to capture output (default: true)"
+            }
+        },
+        "required": ["code"]
+    }
+
+    async def execute(self, *, code: str, timeout: int = 30, working_dir: Optional[str] = None, capture_output: bool = True, **kwargs: Any) -> str:
+        try:
+            # Create temporary Python file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
+                temp_file.write(code)
+                temp_file_path = temp_file.name
+            
+            # Execute Python file
+            cmd = ["python3", temp_file_path]
+            cwd = working_dir if working_dir else os.getcwd()
+            
+            result = subprocess.run(
+                cmd, 
+                capture_output=capture_output, 
+                text=True, 
+                timeout=timeout,
+                cwd=cwd
+            )
+            
+            # Clean up temp file
+            os.unlink(temp_file_path)
+            
+            output = []
+            if result.stdout:
+                output.append(f"📤 **Output**:\n{result.stdout}")
+            if result.stderr:
+                output.append(f"⚠️ **Errors**:\n{result.stderr}")
+            
+            if output:
+                return "\n\n".join(output)
+            else:
+                return "✅ Python code executed successfully (no output)"
+            
+        except subprocess.TimeoutExpired:
+            return f"⏰ Python execution timed out after {timeout} seconds"
+        except Exception as e:
+            return f"❌ Error executing Python code: {str(e)}"
 
 class ShellExec(BaseTool):
     name: str = "shell_exec"
@@ -385,83 +505,87 @@ class ShellExec(BaseTool):
         "properties": {
             "id": {
                 "type": "string",
-                "description": "Unique identifier of the target shell session"
+                "description": "Shell session ID"
             },
             "exec_dir": {
                 "type": "string",
-                "description": "Working directory for command execution (must use absolute path)"
+                "description": "Directory to execute command in"
             },
             "command": {
                 "type": "string",
-                "description": "Shell command to execute"
+                "description": "Command to execute"
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "(Optional) Command timeout in seconds (default: 60)"
+            },
+            "background": {
+                "type": "boolean",
+                "description": "(Optional) Whether to run command in background"
             }
         },
         "required": ["id", "exec_dir", "command"]
     }
 
-    async def execute(self, *, id: str, exec_dir: str, command: str, **kwargs: Any) -> str:
+    async def execute(self, *, id: str, exec_dir: str, command: str, timeout: int = 60, background: bool = False, **kwargs: Any) -> str:
         try:
-            # Initialize shell session if it doesn't exist
             if id not in shell_sessions:
                 shell_sessions[id] = {
                     'process': None,
                     'output': [],
                     'working_dir': exec_dir,
-                    'status': 'idle'
+                    'created_at': time.time()
                 }
             
             session = shell_sessions[id]
+            session['working_dir'] = exec_dir
             
-            # Change to specified directory
-            if not os.path.exists(exec_dir):
-                return f"❌ Error: Directory '{exec_dir}' does not exist"
-            
-            # Execute command
-            try:
+            if background:
+                # Run command in background
+                process = subprocess.Popen(
+                    command,
+                    shell=True,
+                    cwd=exec_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                session['process'] = process
+                return f"🔄 Command started in background (PID: {process.pid})"
+            else:
+                # Run command and wait for completion
                 result = subprocess.run(
                     command,
                     shell=True,
                     cwd=exec_dir,
                     capture_output=True,
                     text=True,
-                    timeout=60
+                    timeout=timeout
                 )
                 
-                output = result.stdout
-                error = result.stderr
+                output = []
+                if result.stdout:
+                    output.append(f"📤 **Output**:\n{result.stdout}")
+                if result.stderr:
+                    output.append(f"⚠️ **Errors**:\n{result.stderr}")
                 
-                # Store output in session
                 session['output'].append({
                     'command': command,
-                    'stdout': output,
-                    'stderr': error,
                     'returncode': result.returncode,
-                    'timestamp': asyncio.get_event_loop().time()
+                    'stdout': result.stdout,
+                    'stderr': result.stderr,
+                    'timestamp': time.time()
                 })
                 
-                # Keep only last 10 outputs
-                if len(session['output']) > 10:
-                    session['output'] = session['output'][-10:]
-                
-                result_text = f"💻 **Command executed in shell '{id}'**:\n```bash\n{command}\n```\n"
-                
                 if output:
-                    result_text += f"📤 **Output**:\n```\n{output}\n```\n"
-                
-                if error:
-                    result_text += f"⚠️ **Errors**:\n```\n{error}\n```\n"
-                
-                result_text += f"🔢 **Exit code**: {result.returncode}"
-                
-                return result_text
-                
-            except subprocess.TimeoutExpired:
-                return f"⏰ Command timed out after 60 seconds: `{command}`"
-            except Exception as e:
-                return f"❌ Error executing command: {str(e)}"
+                    return "\n\n".join(output)
+                else:
+                    return f"✅ Command executed successfully (return code: {result.returncode})"
             
+        except subprocess.TimeoutExpired:
+            return f"⏰ Command timed out after {timeout} seconds"
         except Exception as e:
-            return f"❌ Error in shell session '{id}': {str(e)}"
+            return f"❌ Error executing command: {str(e)}"
 
 class ShellView(BaseTool):
     name: str = "shell_view"
@@ -471,41 +595,41 @@ class ShellView(BaseTool):
         "properties": {
             "id": {
                 "type": "string",
-                "description": "Unique identifier of the target shell session"
+                "description": "Shell session ID"
+            },
+            "last_n": {
+                "type": "integer",
+                "description": "(Optional) Number of recent commands to show (default: 5)"
             }
         },
         "required": ["id"]
     }
 
-    async def execute(self, *, id: str, **kwargs: Any) -> str:
+    async def execute(self, *, id: str, last_n: int = 5, **kwargs: Any) -> str:
         try:
             if id not in shell_sessions:
-                return f"❌ Error: Shell session '{id}' does not exist"
+                return f"❌ Shell session '{id}' not found"
             
             session = shell_sessions[id]
+            output = session['output'][-last_n:] if session['output'] else []
             
-            if not session['output']:
-                return f"📋 Shell session '{id}' has no command history"
+            if not output:
+                return f"📋 No command history for session '{id}'"
             
-            result = f"📋 **Shell Session '{id}' History**:\n"
-            result += f"📁 **Working Directory**: {session['working_dir']}\n\n"
-            
-            for i, output in enumerate(session['output'], 1):
-                result += f"**Command {i}**:\n```bash\n{output['command']}\n```\n"
-                
-                if output['stdout']:
-                    result += f"**Output**:\n```\n{output['stdout']}\n```\n"
-                
-                if output['stderr']:
-                    result += f"**Errors**:\n```\n{output['stderr']}\n```\n"
-                
-                result += f"**Exit Code**: {output['returncode']}\n"
-                result += "─" * 50 + "\n\n"
+            result = f"📋 **Shell Session '{id}'** (last {len(output)} commands):\n\n"
+            for i, cmd_output in enumerate(output, 1):
+                result += f"**Command {i}**: `{cmd_output['command']}`\n"
+                result += f"**Return Code**: {cmd_output['returncode']}\n"
+                if cmd_output['stdout']:
+                    result += f"**Output**:\n```\n{cmd_output['stdout']}\n```\n"
+                if cmd_output['stderr']:
+                    result += f"**Errors**:\n```\n{cmd_output['stderr']}\n```\n"
+                result += "---\n"
             
             return result
             
         except Exception as e:
-            return f"❌ Error viewing shell session '{id}': {str(e)}"
+            return f"❌ Error viewing shell session: {str(e)}"
 
 class ShellWait(BaseTool):
     name: str = "shell_wait"
@@ -515,11 +639,11 @@ class ShellWait(BaseTool):
         "properties": {
             "id": {
                 "type": "string",
-                "description": "Unique identifier of the target shell session"
+                "description": "Shell session ID"
             },
             "seconds": {
                 "type": "integer",
-                "description": "Wait duration in seconds"
+                "description": "(Optional) Maximum seconds to wait (default: 0 for indefinite)"
             }
         },
         "required": ["id"]
@@ -528,20 +652,44 @@ class ShellWait(BaseTool):
     async def execute(self, *, id: str, seconds: int = 0, **kwargs: Any) -> str:
         try:
             if id not in shell_sessions:
-                return f"❌ Error: Shell session '{id}' does not exist"
+                return f"❌ Shell session '{id}' not found"
             
             session = shell_sessions[id]
+            process = session['process']
             
-            if seconds > 0:
-                await asyncio.sleep(seconds)
-                return f"⏰ Waited {seconds} seconds for shell session '{id}'"
-            else:
-                return f"ℹ️ Shell session '{id}' is ready (no wait time specified)"
+            if not process:
+                return f"📋 No running process in session '{id}'"
+            
+            try:
+                stdout, stderr = process.communicate(timeout=seconds if seconds > 0 else None)
+                
+                session['output'].append({
+                    'command': 'Background process completed',
+                    'returncode': process.returncode,
+                    'stdout': stdout,
+                    'stderr': stderr,
+                    'timestamp': time.time()
+                })
+                
+                session['process'] = None
+                
+                output = []
+                if stdout:
+                    output.append(f"📤 **Output**:\n{stdout}")
+                if stderr:
+                    output.append(f"⚠️ **Errors**:\n{stderr}")
+                
+                if output:
+                    return "\n\n".join(output)
+                else:
+                    return f"✅ Background process completed (return code: {process.returncode})"
+                
+            except subprocess.TimeoutExpired:
+                return f"⏰ Process still running after {seconds} seconds"
             
         except Exception as e:
-            return f"❌ Error waiting for shell session '{id}': {str(e)}"
+            return f"❌ Error waiting for process: {str(e)}"
 
-# Additional advanced tools
 class FileCopy(BaseTool):
     name: str = "file_copy"
     description: str = "Copy files or directories from source to destination. Use for backing up files or creating duplicates."
@@ -558,21 +706,25 @@ class FileCopy(BaseTool):
             },
             "recursive": {
                 "type": "boolean",
-                "description": "Whether to copy directories recursively"
+                "description": "(Optional) Whether to copy directories recursively"
+            },
+            "preserve_attributes": {
+                "type": "boolean",
+                "description": "(Optional) Whether to preserve file attributes"
             }
         },
         "required": ["source", "destination"]
     }
 
-    async def execute(self, *, source: str, destination: str, recursive: bool = False, **kwargs: Any) -> str:
+    async def execute(self, *, source: str, destination: str, recursive: bool = False, preserve_attributes: bool = False, **kwargs: Any) -> str:
         try:
             if not os.path.exists(source):
-                return f"❌ Error: Source '{source}' does not exist"
+                return f"❌ Source '{source}' does not exist"
             
             if os.path.isdir(source) and recursive:
                 shutil.copytree(source, destination, dirs_exist_ok=True)
             else:
-                shutil.copy2(source, destination)
+                shutil.copy2(source, destination) if preserve_attributes else shutil.copy(source, destination)
             
             return f"✅ Copied '{source}' to '{destination}'"
             
@@ -591,19 +743,26 @@ class FileDelete(BaseTool):
             },
             "recursive": {
                 "type": "boolean",
-                "description": "Whether to delete directories recursively"
+                "description": "(Optional) Whether to delete directories recursively"
+            },
+            "force": {
+                "type": "boolean",
+                "description": "(Optional) Whether to force deletion without confirmation"
             }
         },
         "required": ["path"]
     }
 
-    async def execute(self, *, path: str, recursive: bool = False, **kwargs: Any) -> str:
+    async def execute(self, *, path: str, recursive: bool = False, force: bool = False, **kwargs: Any) -> str:
         try:
             if not os.path.exists(path):
-                return f"❌ Error: Path '{path}' does not exist"
+                return f"❌ Path '{path}' does not exist"
             
-            if os.path.isdir(path) and recursive:
-                shutil.rmtree(path)
+            if os.path.isdir(path):
+                if recursive:
+                    shutil.rmtree(path)
+                else:
+                    os.rmdir(path)
             else:
                 os.remove(path)
             
@@ -624,15 +783,19 @@ class DirectoryCreate(BaseTool):
             },
             "parents": {
                 "type": "boolean",
-                "description": "Whether to create parent directories if they don't exist"
+                "description": "(Optional) Whether to create parent directories"
+            },
+            "mode": {
+                "type": "integer",
+                "description": "(Optional) Directory permissions (octal)"
             }
         },
         "required": ["path"]
     }
 
-    async def execute(self, *, path: str, parents: bool = True, **kwargs: Any) -> str:
+    async def execute(self, *, path: str, parents: bool = True, mode: Optional[int] = None, **kwargs: Any) -> str:
         try:
-            os.makedirs(path, exist_ok=True)
+            os.makedirs(path, mode=mode, exist_ok=True)
             return f"✅ Created directory '{path}'"
             
         except Exception as e:
@@ -647,23 +810,46 @@ class ProcessList(BaseTool):
             "pattern": {
                 "type": "string",
                 "description": "Optional pattern to filter processes"
+            },
+            "user": {
+                "type": "string",
+                "description": "Optional user to filter processes by"
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Optional limit on number of processes to show"
             }
         },
         "required": []
     }
 
-    async def execute(self, *, pattern: str = "", **kwargs: Any) -> str:
+    async def execute(self, *, pattern: str = "", user: str = "", limit: int = 20, **kwargs: Any) -> str:
         try:
-            cmd = ["ps", "aux"]
-            if pattern:
-                cmd.extend(["|", "grep", pattern])
+            processes = []
+            for proc in psutil.process_iter(['pid', 'name', 'username', 'cpu_percent', 'memory_percent']):
+                try:
+                    proc_info = proc.info
+                    if pattern and pattern.lower() not in proc_info['name'].lower():
+                        continue
+                    if user and proc_info['username'] != user:
+                        continue
+                    processes.append(proc_info)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
             
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+            # Sort by CPU usage
+            processes.sort(key=lambda x: x['cpu_percent'] or 0, reverse=True)
+            processes = processes[:limit]
             
-            if result.returncode == 0:
-                return f"🖥️ **Running Processes**:\n```\n{result.stdout}\n```"
+            if processes:
+                result = "🖥️ **Running Processes**:\n"
+                result += "PID\tName\t\tUser\t\tCPU%\tMemory%\n"
+                result += "-" * 60 + "\n"
+                for proc in processes:
+                    result += f"{proc['pid']}\t{proc['name'][:15]:<15}\t{proc['username']:<10}\t{proc['cpu_percent']:.1f}\t{proc['memory_percent']:.1f}\n"
+                return result
             else:
-                return f"❌ Error listing processes: {result.stderr}"
+                return "🖥️ No processes found matching criteria"
             
         except Exception as e:
             return f"❌ Error listing processes: {str(e)}"
@@ -673,58 +859,290 @@ class SystemInfo(BaseTool):
     description: str = "Get system information. Use for monitoring system resources or debugging."
     parameters: dict = {
         "type": "object",
-        "properties": {},
+        "properties": {
+            "detailed": {
+                "type": "boolean",
+                "description": "(Optional) Whether to include detailed information"
+            }
+        },
         "required": []
     }
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, *, detailed: bool = False, **kwargs: Any) -> str:
         try:
             info = {}
             
+            # Basic system info
+            info['platform'] = platform.platform()
+            info['python_version'] = platform.python_version()
+            info['architecture'] = platform.architecture()[0]
+            
             # CPU info
-            try:
-                with open('/proc/cpuinfo', 'r') as f:
-                    cpu_info = f.read()
-                    info['cpu'] = cpu_info.split('\n')[0].split(':')[1].strip()
-            except:
-                info['cpu'] = "Unknown"
+            info['cpu_count'] = psutil.cpu_count()
+            info['cpu_percent'] = psutil.cpu_percent(interval=1)
             
             # Memory info
-            try:
-                with open('/proc/meminfo', 'r') as f:
-                    mem_info = f.read()
-                    total_mem = int(mem_info.split('\n')[0].split()[1]) // 1024
-                    info['memory'] = f"{total_mem} MB"
-            except:
-                info['memory'] = "Unknown"
+            memory = psutil.virtual_memory()
+            info['memory_total'] = f"{memory.total // (1024**3):.1f} GB"
+            info['memory_available'] = f"{memory.available // (1024**3):.1f} GB"
+            info['memory_percent'] = f"{memory.percent:.1f}%"
             
-            # Disk usage
-            try:
-                result = subprocess.run(['df', '-h', '/'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    lines = result.stdout.strip().split('\n')
-                    if len(lines) > 1:
-                        disk_info = lines[1].split()
-                        info['disk'] = f"{disk_info[1]} total, {disk_info[2]} used, {disk_info[3]} available"
-            except:
-                info['disk'] = "Unknown"
+            # Disk info
+            disk = psutil.disk_usage('/')
+            info['disk_total'] = f"{disk.total // (1024**3):.1f} GB"
+            info['disk_free'] = f"{disk.free // (1024**3):.1f} GB"
+            info['disk_percent'] = f"{disk.percent:.1f}%"
             
-            # OS info
-            try:
-                with open('/etc/os-release', 'r') as f:
-                    os_info = f.read()
-                    for line in os_info.split('\n'):
-                        if line.startswith('PRETTY_NAME='):
-                            info['os'] = line.split('=')[1].strip('"')
-                            break
-            except:
-                info['os'] = "Unknown"
+            # Network info
+            network = psutil.net_io_counters()
+            info['network_bytes_sent'] = f"{network.bytes_sent // (1024**2):.1f} MB"
+            info['network_bytes_recv'] = f"{network.bytes_recv // (1024**2):.1f} MB"
+            
+            if detailed:
+                # Additional detailed info
+                info['boot_time'] = datetime.fromtimestamp(psutil.boot_time()).strftime('%Y-%m-%d %H:%M:%S')
+                info['hostname'] = socket.gethostname()
+                info['ip_address'] = socket.gethostbyname(socket.gethostname())
+                
+                # Load average (Linux only)
+                try:
+                    load_avg = os.getloadavg()
+                    info['load_average'] = f"{load_avg[0]:.2f}, {load_avg[1]:.2f}, {load_avg[2]:.2f}"
+                except:
+                    info['load_average'] = "N/A"
             
             result = "🖥️ **System Information**:\n"
             for key, value in info.items():
-                result += f"**{key.title()}**: {value}\n"
+                result += f"**{key.replace('_', ' ').title()}**: {value}\n"
             
             return result
             
         except Exception as e:
             return f"❌ Error getting system information: {str(e)}"
+
+class NetworkTest(BaseTool):
+    name: str = "network_test"
+    description: str = "Test network connectivity and performance. Use for diagnosing network issues or checking connectivity."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "host": {
+                "type": "string",
+                "description": "Host to test connectivity to"
+            },
+            "port": {
+                "type": "integer",
+                "description": "(Optional) Port to test (default: 80)"
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "(Optional) Timeout in seconds (default: 5)"
+            }
+        },
+        "required": ["host"]
+    }
+
+    async def execute(self, *, host: str, port: int = 80, timeout: int = 5, **kwargs: Any) -> str:
+        try:
+            # Test basic connectivity
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            
+            start_time = time.time()
+            result = sock.connect_ex((host, port))
+            end_time = time.time()
+            
+            sock.close()
+            
+            if result == 0:
+                response_time = (end_time - start_time) * 1000
+                return f"✅ **Network Test**: {host}:{port} is reachable (Response time: {response_time:.2f}ms)"
+            else:
+                return f"❌ **Network Test**: {host}:{port} is not reachable"
+            
+        except Exception as e:
+            return f"❌ Error testing network connectivity: {str(e)}"
+
+class WebRequest(BaseTool):
+    name: str = "web_request"
+    description: str = "Make HTTP requests to web services. Use for API calls, web scraping, or checking web services."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "URL to make request to"
+            },
+            "method": {
+                "type": "string",
+                "enum": ["GET", "POST", "PUT", "DELETE", "HEAD"],
+                "description": "(Optional) HTTP method (default: GET)"
+            },
+            "headers": {
+                "type": "object",
+                "description": "(Optional) HTTP headers to include"
+            },
+            "data": {
+                "type": "string",
+                "description": "(Optional) Data to send with request"
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "(Optional) Request timeout in seconds (default: 30)"
+            }
+        },
+        "required": ["url"]
+    }
+
+    async def execute(self, *, url: str, method: str = "GET", headers: Optional[Dict] = None, data: Optional[str] = None, timeout: int = 30, **kwargs: Any) -> str:
+        try:
+            response = requests.request(
+                method=method,
+                url=url,
+                headers=headers or {},
+                data=data,
+                timeout=timeout
+            )
+            
+            result = f"🌐 **HTTP {method} Request**: {url}\n"
+            result += f"**Status Code**: {response.status_code}\n"
+            result += f"**Response Time**: {response.elapsed.total_seconds():.2f}s\n"
+            
+            if response.headers:
+                result += f"**Response Headers**:\n"
+                for key, value in list(response.headers.items())[:5]:  # Show first 5 headers
+                    result += f"  {key}: {value}\n"
+            
+            if response.text:
+                # Truncate response if too long
+                text = response.text[:1000] + "..." if len(response.text) > 1000 else response.text
+                result += f"**Response Body**:\n```\n{text}\n```"
+            
+            return result
+            
+        except requests.exceptions.Timeout:
+            return f"⏰ Request to {url} timed out after {timeout} seconds"
+        except requests.exceptions.ConnectionError:
+            return f"❌ Connection error to {url}"
+        except Exception as e:
+            return f"❌ Error making request to {url}: {str(e)}"
+
+class FileCompress(BaseTool):
+    name: str = "file_compress"
+    description: str = "Compress files or directories into archive formats. Use for creating backups or reducing file sizes."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "source": {
+                "type": "string",
+                "description": "Source file or directory to compress"
+            },
+            "destination": {
+                "type": "string",
+                "description": "Destination archive file path"
+            },
+            "format": {
+                "type": "string",
+                "enum": ["zip", "tar", "tar.gz"],
+                "description": "(Optional) Archive format (default: zip)"
+            }
+        },
+        "required": ["source", "destination"]
+    }
+
+    async def execute(self, *, source: str, destination: str, format: str = "zip", **kwargs: Any) -> str:
+        try:
+            if not os.path.exists(source):
+                return f"❌ Source '{source}' does not exist"
+            
+            if format == "zip":
+                if os.path.isdir(source):
+                    shutil.make_archive(destination.replace('.zip', ''), 'zip', source)
+                else:
+                    shutil.make_archive(destination.replace('.zip', ''), 'zip', os.path.dirname(source), os.path.basename(source))
+            elif format == "tar":
+                shutil.make_archive(destination.replace('.tar', ''), 'tar', source)
+            elif format == "tar.gz":
+                shutil.make_archive(destination.replace('.tar.gz', ''), 'gztar', source)
+            
+            return f"✅ Compressed '{source}' to '{destination}'"
+            
+        except Exception as e:
+            return f"❌ Error compressing '{source}': {str(e)}"
+
+class FileExtract(BaseTool):
+    name: str = "file_extract"
+    description: str = "Extract files from archive formats. Use for unpacking compressed files or restoring backups."
+    parameters: dict = {
+        "type": "object",
+        "properties": {
+            "archive": {
+                "type": "string",
+                "description": "Archive file to extract"
+            },
+            "destination": {
+                "type": "string",
+                "description": "Destination directory for extracted files"
+            },
+            "format": {
+                "type": "string",
+                "enum": ["auto", "zip", "tar", "tar.gz"],
+                "description": "(Optional) Archive format (default: auto)"
+            }
+        },
+        "required": ["archive", "destination"]
+    }
+
+    async def execute(self, *, archive: str, destination: str, format: str = "auto", **kwargs: Any) -> str:
+        try:
+            if not os.path.exists(archive):
+                return f"❌ Archive '{archive}' does not exist"
+            
+            os.makedirs(destination, exist_ok=True)
+            
+            if format == "auto":
+                if archive.endswith('.zip'):
+                    format = "zip"
+                elif archive.endswith('.tar.gz'):
+                    format = "tar.gz"
+                elif archive.endswith('.tar'):
+                    format = "tar"
+            
+            if format == "zip":
+                import zipfile
+                with zipfile.ZipFile(archive, 'r') as zip_ref:
+                    zip_ref.extractall(destination)
+            elif format in ["tar", "tar.gz"]:
+                import tarfile
+                mode = 'r:gz' if format == "tar.gz" else 'r'
+                with tarfile.open(archive, mode) as tar_ref:
+                    tar_ref.extractall(destination)
+            
+            return f"✅ Extracted '{archive}' to '{destination}'"
+            
+        except Exception as e:
+            return f"❌ Error extracting '{archive}': {str(e)}"
+
+# Export all tools
+__all__ = [
+    'MessageNotifyUser',
+    'MessageAskUser', 
+    'FileRead',
+    'FileWrite',
+    'FileStrReplace',
+    'FileFindInContent',
+    'FileFindByName',
+    'PythonExec',
+    'ShellExec',
+    'ShellView',
+    'ShellWait',
+    'FileCopy',
+    'FileDelete',
+    'DirectoryCreate',
+    'ProcessList',
+    'SystemInfo',
+    'NetworkTest',
+    'WebRequest',
+    'FileCompress',
+    'FileExtract'
+]
